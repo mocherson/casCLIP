@@ -88,7 +88,10 @@ def train(cfg, local_rank, distributed, use_tensorboard=False,):
     extra_checkpoint_data = checkpointer.load(os.path.join(cfg.initial_path, cfg.MODEL.WEIGHT))
     arguments.update(extra_checkpoint_data)
 
-    checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
+    if cfg.SOLVER.CHECKPOINT_PER_EPOCH > 0:
+        checkpoint_period = len(data_loader)//cfg.SOLVER.MAX_EPOCH//cfg.SOLVER.CHECKPOINT_PER_EPOCH
+    else:
+        checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
     if use_tensorboard:
         meters = TensorboardLogger(

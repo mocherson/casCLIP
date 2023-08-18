@@ -83,8 +83,6 @@ def do_train(
 
     global_rank = get_rank()
 
-    if cfg.SOLVER.CHECKPOINT_PER_EPOCH != -1 and cfg.SOLVER.MAX_EPOCH >= 1:
-        checkpoint_period = len(data_loader) * cfg.SOLVER.CHECKPOINT_PER_EPOCH // cfg.SOLVER.MAX_EPOCH
     
     if global_rank <= 0 and cfg.SOLVER.MAX_EPOCH >= 1:
         print("Iter per epoch ", len(data_loader) // cfg.SOLVER.MAX_EPOCH )
