@@ -42,14 +42,19 @@ def reduce_loss_dict(loss_dict):
         reduced_losses = {k: v for k, v in zip(loss_names, all_losses)}
     return reduced_losses
 
-def evaluate(predictions):
-    study_id, vt_logits_l0, vt_logits_l1, labels  = list(zip(*predictions))
-    study_id = len(sum(study_id,[]))
+def evaluate(all_predictions):
+    study_id, vt_logits_l0, vt_logits_l1, labels = [], [], [], []
+    for p in all_predictions:
+        for k, v in p.items():
+            study_id.extend(v[0])
+            vt_logits_l0.append(v[1])
+            vt_logits_l1.append(v[2])
+            labels.append(v[3])
     vt_logits_l0 = torch.cat(vt_logits_l0)
     vt_logits_l1 = torch.cat(vt_logits_l1)
     labels = torch.cat(labels)
     auc = roc_auc_score(labels[labels!=-1],vt_logits_l1[labels!=-1])
-    return auc
+    return auc, study_id, vt_logits_l0, vt_logits_l1, labels
 
 
 def do_train(
@@ -154,6 +159,7 @@ def do_train(
         loss_dict_reduced = reduce_loss_dict(loss_dict)
         losses_reduced = sum(loss for loss in loss_dict_reduced.values())
         meters.update(loss=losses_reduced, **loss_dict_reduced)
+        
         if model_ema is not None:
             model_ema.update(model)
             arguments["model_ema"] = model_ema.state_dict()
@@ -204,13 +210,9 @@ def do_train(
                 )
             all_predictions = all_gather(results_dict)
             if is_main_process():
-                predictions = {}
-                for p in all_predictions:
-                    predictions.update(p)
-                predictions = [predictions[i] for i in list(sorted(predictions.keys()))]
-                auc_val = evaluate(predictions)
-                print(f'Evaluation on val, AUC={auc_val}')
-                torch.save(predictions, './results/predictions.pkl')
+                res = evaluate(all_predictions)
+                print(f'Evaluation on val, AUC={res[0]}')
+                torch.save(res, os.path.join(cfg.OUTPUT_DIR,f'predictions_{iteration}.pkl'))
             model.train()
 
             if model_ema is not None and cfg.SOLVER.USE_EMA_FOR_MONITOR:
@@ -226,13 +228,9 @@ def do_train(
                     )
                 all_predictions = all_gather(results_dict)
                 if is_main_process():
-                    predictions = {}
-                    for p in all_predictions:
-                        predictions.update(p)
-                    predictions = [predictions[i] for i in list(sorted(predictions.keys()))]
-                    auc_val = evaluate(predictions)
-                    print(f'Evaluation on val, AUC={auc_val}')
-                    torch.save(predictions, './results/predictions.pkl')
+                    res = evaluate(all_predictions)
+                    print(f'Evaluation on val, AUC={res[0]}')
+                    torch.save(res, os.path.join(cfg.OUTPUT_DIR,f'predictions_{iteration}.pkl'))
             arguments.update(eval_result=eval_result)
 
             if cfg.SOLVER.USE_AUTOSTEP:
