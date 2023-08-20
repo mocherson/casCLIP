@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from maskrcnn_benchmark.structures.image_list import to_image_list
 from maskrcnn_benchmark.structures.bounding_box import BoxList
 from maskrcnn_benchmark.structures.boxlist_ops import cat_boxlist
+from maskrcnn_benchmark.utils.comm import get_world_size, all_gather, is_main_process, broadcast_data, get_rank
 
 from ..backbone import build_backbone
 from ..rpn import build_rpn
@@ -244,8 +245,18 @@ class GeneralizedVLRCNN_CXR(nn.Module):
             cliploss = self.clip_loss(visual_emb, text_emb, self.logit_scale[0].exp(), output_dict=False)
             cliploss_visual_label = self.label_loss(visual_emb1, label_emb, self.logit_scale[1].exp(), prompt_target, output_dict=False)
             cliploss_text_label = self.label_loss(text_emb1, label_emb, self.logit_scale[1].exp(), prompt_target, output_dict=False)
-            losses = {"contrastive_loss": cliploss+cliploss_visual_label+cliploss_text_label}
-
+            losses = {"cliploss": cliploss * self.cfg.SOLVER.LOSS_WEIGHT.CLIPLOSS, 
+                      'cliploss_visual_label':cliploss_visual_label * self.cfg.SOLVER.LOSS_WEIGHT.CLIPLOSS_VISUAL_LABEL, 
+                      'cliploss_text_label':cliploss_text_label * self.cfg.SOLVER.LOSS_WEIGHT.CLIPLOSS_TEXT_LABEL}
+            # torch.save({'losses': losses,
+            #             'logit_scale': self.logit_scale,
+            #             'visual_emb': visual_emb,
+            #             'text_emb': text_emb,
+            #             'visual_emb1': visual_emb1,
+            #             'label_emb': label_emb,
+            #             'text_emb1': text_emb1,
+            #             'prompt_target': prompt_target,
+            #             'label_prompt':label_prompt}, f'var_{device}.pk')
             return losses
         else:
             vt_logits_l0 = visual_emb@text_emb.T
