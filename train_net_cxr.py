@@ -30,7 +30,6 @@ import random
 from maskrcnn_benchmark.utils.amp import autocast, GradScaler
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-os.environ['DATASET'] = '/data/Mao/DATASET'
 
 def train(cfg, local_rank, distributed, use_tensorboard=False,):
     model = build_detection_model(cfg)
@@ -200,6 +199,7 @@ def main():
     cfg.num_gpus = num_gpus
     cfg.data_path = args.data_path
     cfg.initial_path = args.initial_path
+    cfg.set_new_allowed(True)
 
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
