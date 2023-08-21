@@ -159,7 +159,7 @@ def do_train(
         loss_dict_reduced = reduce_loss_dict(loss_dict)
         losses_reduced = sum(loss for loss in loss_dict_reduced.values())
         meters.update(loss=losses_reduced, **loss_dict_reduced)
-        
+
         if model_ema is not None:
             model_ema.update(model)
             arguments["model_ema"] = model_ema.state_dict()
