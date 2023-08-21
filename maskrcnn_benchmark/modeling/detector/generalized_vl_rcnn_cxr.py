@@ -96,7 +96,16 @@ class GeneralizedVLRCNN_CXR(nn.Module):
         self.tokenizer_vocab_ids = [item for key, item in self.tokenizer_vocab.items()]
 
         self.language_backbone = build_language_backbone(cfg)
-        self.image_agg = lambda x: x.max(dim=0)[0]
+        if cfg.MODEL.IMAGE_AGG == "maxpooling":
+            image_agg = lambda x: x.max(dim=0, keepdim=True)[0]
+        else:
+            raise NameError("The image aggregation function {} is not defined".format(cfg.MODEL.IMAGE_AGG))
+
+        encoder_layer = nn.TransformerEncoderLayer(d_model=cfg.MODEL.BACKBONE.OUT_CHANNELS*5, nhead=cfg.MODEL.TRANSFORMER_HEADS, batch_first=True)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=cfg.MODEL.TRANSFORMER_LAYERS)
+        self.image_agg = lambda x: self.transformer_encoder(torch.cat([image_agg(x), x]).unsqueeze(dim=0))[0][0] 
+
+
         self.visual_proj = nn.Linear(cfg.MODEL.BACKBONE.OUT_CHANNELS*5, self.language_backbone.body.language_dim)
         self.logit_scale = nn.Parameter(torch.ones([2]) * np.log(1 / 0.07))
 
@@ -213,8 +222,8 @@ class GeneralizedVLRCNN_CXR(nn.Module):
         else:
             visual_features = self.backbone(images.tensors)
 
-        visual_features_agg = [torch.stack([self.image_agg(x) for x in torch.split(vf,n_img)]) for vf in visual_features]
-        visual_features_agg = torch.cat([torch.nn.MaxPool2d(x.shape[-2:])(x).squeeze() for x in visual_features_agg], dim=1)
+        visual_features_agg = torch.cat([torch.nn.MaxPool2d(x.shape[-2:])(x).squeeze() for x in visual_features], dim=1)
+        visual_features_agg = torch.stack([self.image_agg(x) for x in torch.split(visual_features_agg,n_img)]) 
         visual_emb = F.normalize(self.visual_proj(visual_features_agg), dim=-1)
 
         #  encode label prompt
