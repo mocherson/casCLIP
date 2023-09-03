@@ -63,14 +63,6 @@ def random_word(input_ids, mask_token_id, vocabs, padding_token_id, greenlight_m
 
 
 class GeneralizedVLRCNN_CXR(nn.Module):
-    """
-    Main class for Generalized R-CNN. Currently supports boxes and masks.
-    It consists of three main parts:
-    - backbone
-    - rpn
-    - heads: takes the features + the proposals from the RPN and computes
-        detections / masks from it.
-    """
 
     def __init__(self, cfg):
         super(GeneralizedVLRCNN_CXR, self).__init__()
@@ -115,9 +107,6 @@ class GeneralizedVLRCNN_CXR(nn.Module):
         # self.label_prompt_backbone = build_language_backbone(cfg)
         self.label_level_proj = nn.Linear(self.language_backbone.body.language_dim, self.language_backbone.body.language_dim)
 
-
-
-        self.DEBUG = cfg.MODEL.DEBUG
 
         self.freeze_backbone = cfg.MODEL.BACKBONE.FREEZE
         self.freeze_fpn = cfg.MODEL.FPN.FREEZE    
@@ -280,5 +269,203 @@ class GeneralizedVLRCNN_CXR(nn.Module):
                     'visual_features' : visual_features,
                     'language_dict_features' : language_dict_features
                         } 
+
+class casCLIP_CXR(nn.Module):
+
+    def __init__(self, cfg):
+        super(casCLIP_CXR, self).__init__()
+        self.cfg = cfg
+
+        # visual encoder
+        self.backbone = build_backbone(cfg)
+
+        # language encoder
+        if cfg.MODEL.LANGUAGE_BACKBONE.TOKENIZER_TYPE == "clip":
+            # self.tokenizer = build_tokenizer("clip")
+            from transformers import CLIPTokenizerFast
+            if cfg.MODEL.DYHEAD.FUSE_CONFIG.MLM_LOSS:
+                print("Reuse token 'ðŁĴĳ</w>' (token_id = 49404) for mask token!")
+                self.tokenizer = CLIPTokenizerFast.from_pretrained("openai/clip-vit-base-patch32",
+                                                                            from_slow=True, mask_token='ðŁĴĳ</w>')
+            else:
+                self.tokenizer = CLIPTokenizerFast.from_pretrained("openai/clip-vit-base-patch32",
+                                                                            from_slow=True)
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained(cfg.MODEL.LANGUAGE_BACKBONE.TOKENIZER_TYPE)
+        self.tokenizer_vocab = self.tokenizer.get_vocab()
+        self.tokenizer_vocab_ids = [item for key, item in self.tokenizer_vocab.items()]
+
+        self.language_backbone = build_language_backbone(cfg)
+        if cfg.MODEL.IMAGE_AGG == "maxpooling":
+            image_agg = lambda x: x.max(dim=0, keepdim=True)[0]
+        else:
+            raise NameError("The image aggregation function {} is not defined".format(cfg.MODEL.IMAGE_AGG))
+
+        encoder_layer = nn.TransformerEncoderLayer(d_model=cfg.MODEL.BACKBONE.OUT_CHANNELS*5, nhead=cfg.MODEL.TRANSFORMER_HEADS, batch_first=True)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=cfg.MODEL.TRANSFORMER_LAYERS)
+        self.image_agg = lambda x: self.transformer_encoder(torch.cat([image_agg(x), x]).unsqueeze(dim=0))[0][0] 
+
+
+        self.visual_proj = nn.Linear(cfg.MODEL.BACKBONE.OUT_CHANNELS*5, self.language_backbone.body.language_dim)
+        self.logit_scale = nn.Parameter(torch.ones([1+len(cfg.MODEL.LABEL_EMBEDDING_DIM)]) * np.log(1 / 0.07))
+
+        self.clip_loss = ClipLoss()
+        if cfg.SOLVER.LABEL_LOSS=='BCE':
+            self.label_loss = ClipLabelLoss()
+        else:
+            pass 
+
+        self.label_level_proj =nn.ModuleList([])
+        self.extrac_net = nn.ModuleList([])
+        for i, dim in enumerate(cfg.MODEL.LABEL_EMBEDDING_DIM):
+            self.label_level_proj.append( nn.Linear(self.language_backbone.body.language_dim, dim)  ) 
+                                        
+            if i==0:
+                self.extrac_net.append(nn.Sequential( nn.Linear(self.language_backbone.body.language_dim, dim),
+                                                      nn.LayerNorm(dim) ) 
+                                      )
+            else:
+                self.extrac_net.append(nn.Sequential( nn.Linear(cfg.MODEL.LABEL_EMBEDDING_DIM[i-1], dim),
+                                                      nn.LayerNorm(dim) ) 
+                                      )
+
+
+        self.freeze_backbone = cfg.MODEL.BACKBONE.FREEZE
+        self.freeze_fpn = cfg.MODEL.FPN.FREEZE    
+        self.freeze_language_backbone = self.cfg.MODEL.LANGUAGE_BACKBONE.FREEZE
+        if self.cfg.MODEL.LANGUAGE_BACKBONE.FREEZE:
+            for p in self.language_backbone.parameters():
+                p.requires_grad = False
+            # for p in self.label_prompt_backbone.parameters():
+            #     p.requires_grad = False
+
+
+    def train(self, mode=True):
+        """Convert the model into training mode while keep layers freezed."""
+        super(casCLIP_CXR, self).train(mode)
+        if self.freeze_backbone:
+            self.backbone.body.eval()
+            for p in self.backbone.body.parameters():
+                p.requires_grad = False
+        if self.freeze_fpn:
+            self.backbone.fpn.eval()
+            for p in self.backbone.fpn.parameters():
+                p.requires_grad = False
+
+        if self.freeze_language_backbone:
+            self.language_backbone.eval()
+            for p in self.language_backbone.parameters():
+                p.requires_grad = False
+
+            # self.label_prompt_backbone.eval()
+            # for p in self.label_prompt_backbone.parameters():
+            #     p.requires_grad = False
+
+    def forward(self, data, **kwargs):
+        """
+        Arguments:
+            images (list[Tensor] or ImageList): images to be processed
+            targets (list[BoxList]): ground-truth boxes present in the image (optional)
+
+            mask_black_list: batch x 256, indicates whether or not a certain token is maskable or not
+
+        Returns:
+            result (list[BoxList] or dict[Tensor]): the output from the model.
+                During training, it returns a dict[Tensor] which contains the losses.
+                During testing, it returns list[BoxList] contains additional fields
+                like `scores`, `labels` and `mask` (for Mask R-CNN models).
+
+        """
+        images = data['images'] if 'images' not in kwargs else kwargs['images']
+        n_img = data['n_img'] if 'n_img' not in kwargs else kwargs['n_img']
+        captions = data['text'] if self.training else kwargs['text'] if 'text' in kwargs else None
+        targets = data['prompt_target'] if 'prompt_target' not in kwargs else kwargs['prompt_target'] if 'prompt_target' in kwargs  else None
+        labels_prompts = data['labels_prompts'] if 'labels_prompts' not in kwargs else kwargs['labels_prompts'] if 'labels_prompts' in kwargs else None
+        
+        images = to_image_list(images)
+        # batch_size = images.tensors.shape[0]
+        device = images.tensors.device
+
+        # language embedding
+        language_dict_features = {}
+        text_emb = None
+        if captions is not None:
+            #print(captions[0])
+            tokenized = self.tokenizer.batch_encode_plus(captions,
+                                                         max_length=self.cfg.MODEL.LANGUAGE_BACKBONE.MAX_QUERY_LEN,
+                                                         padding='max_length' if self.cfg.MODEL.LANGUAGE_BACKBONE.PAD_MAX else "longest",
+                                                         return_special_tokens_mask=True,
+                                                         return_tensors='pt',
+                                                         truncation=True).to(device)        
+            tokenizer_input = {"input_ids": tokenized.input_ids,
+                               "attention_mask": tokenized.attention_mask}
+
+            if self.cfg.MODEL.LANGUAGE_BACKBONE.FREEZE:
+                with torch.no_grad():
+                    language_dict_features = self.language_backbone(tokenizer_input)
+            else:
+                language_dict_features = self.language_backbone(tokenizer_input)
+            
+            text_emb = F.normalize(language_dict_features['hidden'][:,0,:], dim=-1)
+
+        # visual embedding
+        swint_feature_c4 = None
+        if 'vl' in self.cfg.MODEL.SWINT.VERSION:
+            # the backbone only updates the "hidden" field in language_dict_features
+            inputs = {"img": images.tensors, "lang": language_dict_features}
+            visual_features, language_dict_features, swint_feature_c4 = self.backbone(inputs)
+        else:
+            visual_features = self.backbone(images.tensors)
+
+        visual_features_agg = torch.cat([torch.nn.MaxPool2d(x.shape[-2:])(x).squeeze() for x in visual_features], dim=1)
+        visual_features_agg = torch.stack([self.image_agg(x) for x in torch.split(visual_features_agg,n_img)]) 
+        visual_emb = F.normalize(self.visual_proj(visual_features_agg), dim=-1)
+
+        #  encode label prompt
+        label_emb =[]
+        visual_info = [visual_emb]
+        text_info =[text_emb]
+        for i, label_prompt in enumerate(labels_prompts):
+            label_tokenized = self.tokenizer.batch_encode_plus(label_prompt,
+                                                             max_length=self.cfg.MODEL.LANGUAGE_BACKBONE.MAX_QUERY_LEN,
+                                                             padding="longest",
+                                                             return_special_tokens_mask=True,
+                                                             return_tensors='pt',
+                                                             truncation=True).to(device)            
+                
+            label_tokenizer_input = {"input_ids": label_tokenized.input_ids,
+                               "attention_mask": label_tokenized.attention_mask}
+
+            if self.cfg.MODEL.LANGUAGE_BACKBONE.FREEZE:
+                with torch.no_grad():
+                    label_dict_features = self.language_backbone(label_tokenizer_input)
+            else:
+                label_dict_features = self.language_backbone(label_tokenizer_input)
+        
+            label_emb.append( F.normalize(self.label_level_proj[i](label_dict_features['hidden'][:,0,:]), dim=-1) )
+
+            visual_info.append(F.normalize(self.extrac_net[i](visual_info[i]),dim=-1))
+            text_info.append(F.normalize(self.extrac_net[i](text_info[i]),dim=-1))
+
+
+        if self.training:
+            cliploss = self.clip_loss(visual_emb, text_emb, self.logit_scale[0].exp(), output_dict=False) * self.cfg.SOLVER.LOSS_WEIGHT.CLIPLOSS
+            cliploss_visual_label = 0
+            cliploss_text_label = 0
+            for i, lb_emb in enumerate(label_emb,1):
+                cliploss_visual_label += self.label_loss(visual_info[i], lb_emb, self.logit_scale[i].exp(), targets[i-1], output_dict=False) * self.cfg.SOLVER.LOSS_WEIGHT.CLIPLOSS_VISUAL_LABEL[i-1] 
+                cliploss_text_label += self.label_loss(text_info[i], lb_emb, self.logit_scale[i].exp(), targets[i-1], output_dict=False) * self.cfg.SOLVER.LOSS_WEIGHT.CLIPLOSS_TEXT_LABEL[i-1]
+            losses = {"cliploss": cliploss, 
+                      'cliploss_visual_label':cliploss_visual_label , 
+                      'cliploss_text_label':cliploss_text_label }
+            return losses
+        else:
+            logits = []
+            for i in range(len(visual_info)):
+                if i==0:
+                    logits.append(visual_info[i] @ text_info[i].T)
+                else:
+                    logits.append(visual_info[i] @ label_emb[i-1].T)
+            return {'logits' : logits } 
 
 

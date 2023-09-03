@@ -17,11 +17,15 @@ from maskrcnn_benchmark.data.transforms import build_transforms
 from transformers import AutoTokenizer
 from maskrcnn_benchmark.data.datasets.cxr import MimicCXR_V2
 
-def build_dataset(data_path, dataset='MimicCXR_V2', transforms=None):
-    if dataset.lower() =='mimiccxr_v2':
-        dataset = MimicCXR_V2(data_path,  transforms = transforms)
-        tr_set, val_set, te_set = dataset.split()
-        return tr_set, val_set, te_set
+def build_dataset(cfg, transforms=None):
+    for name in cfg.DATASETS.TRAIN:
+        if name.lower() =='mimic-cxrv2':
+            dataset = MimicCXR_V2(cfg.data_path, hierarchy = cfg.MODEL.HIERARCHY, use_PNUprompt=cfg.MODEL.USE_PNUPROMPT, transforms = transforms)
+            tr_set, val_set, te_set = dataset.split()
+        else:
+            pass
+    
+    return tr_set, val_set, te_set
 
 
 def make_data_sampler(dataset, shuffle, distributed, num_replicas=None, rank=None, use_random_seed=True):
@@ -86,7 +90,7 @@ def make_data_loader(cfg,  is_distributed=False, num_replicas=None, rank=None, s
     print("The combined datasets are: {}.".format(cfg.DATASETS.TRAIN ))
 
     transforms = build_transforms(cfg, is_train=False) 
-    datasets = build_dataset(cfg.data_path, dataset='MimicCXR_V2', transforms=transforms)
+    datasets = build_dataset(cfg, transforms=transforms)
 
     data_loaders = []
     for di, dataset in enumerate(datasets):
@@ -171,7 +175,7 @@ def make_data_loader(cfg,  is_distributed=False, num_replicas=None, rank=None, s
         batch_sampler = make_batch_data_sampler(
             dataset, sampler, aspect_grouping, images_per_gpu, num_iters, start_iter, drop_last=is_train
         )
-        collator =BatchCollator_cxr( cfg.DATALOADER.SIZE_DIVISIBILITY)
+        collator =BatchCollator_cxr(cfg.MODEL.HIERARCHY, cfg.MODEL.USE_PNUPROMPT, cfg.DATALOADER.SIZE_DIVISIBILITY)
         num_workers = cfg.DATALOADER.NUM_WORKERS
         data_loader = torch.utils.data.DataLoader(
             dataset,

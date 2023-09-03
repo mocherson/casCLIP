@@ -5,7 +5,7 @@ import sys
 import os
 import math
 import time
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, accuracy_score, f1_score
 
 import torch
 import torch.distributed as dist
@@ -42,19 +42,28 @@ def reduce_loss_dict(loss_dict):
         reduced_losses = {k: v for k, v in zip(loss_names, all_losses)}
     return reduced_losses
 
-def evaluate(all_predictions):
-    study_id, vt_logits_l0, vt_logits_l1, labels = [], [], [], []
+def evaluate(all_predictions, hierarchy = False, use_PNUprompt=False, ):
+    logits, labels = [], []
     for p in all_predictions:
         for k, v in p.items():
-            study_id.extend(v[0])
-            vt_logits_l0.append(v[1])
-            vt_logits_l1.append(v[2])
-            labels.append(v[3])
-    vt_logits_l0 = torch.cat(vt_logits_l0)
-    vt_logits_l1 = torch.cat(vt_logits_l1)
+            logits.append(v[0]['logits'])
+            labels.append(v[1])
+    lg = [torch.cat(x) for x in zip(*logits)]
     labels = torch.cat(labels)
-    auc = roc_auc_score(labels[labels!=-1],vt_logits_l1[labels!=-1])
-    return auc, study_id, vt_logits_l0, vt_logits_l1, labels
+    lb = [labels] * len(lg)
+    if not hierarchy and not use_PNUprompt:
+        pass
+    elif hierarchy and not use_PNUprompt:
+        lg[1] = lg[1][:,:-2]
+        lg[2] = lg[2][:,-2:]
+        lb[1] = lb[1][:,:-1]
+        lb[2] = lb[2][:,-1:]
+    auc = [roc_auc_score(l[l!=2],x[:,1::2][l!=2]) for x, l in zip(lg, lb)]
+    pred = [torch.stack([x.argmax(dim=1) for x in x.split(2,dim=1)], dim=1 ) for x in lg]
+    acc = [accuracy_score(l[l!=2],x[l!=2]) for x, l in zip(pred, lb)]
+    f1 = [f1_score(l[l!=2],x[l!=2]) for x,l  in zip(pred, lb)]
+
+    return auc, acc, f1 
 
 
 def do_train(
@@ -199,20 +208,25 @@ def do_train(
             eval_result = 0.0
             model.eval()
 
+            all_labels = sum(data_loader.dataset.label_prompt.values[:,:2].tolist(),[])
+            level_labels = [all_labels] * len(cfg.MODEL.LABEL_EMBEDDING_DIM) 
             results_dict = {}
             cpu_device = torch.device("cpu")
             for i, data in enumerate(val_data_loader):
                 with torch.no_grad():
                     data['images'] = data['images'].to(device)
-                    output = model(data, text = data_loader.dataset.label_prompt, label_prompt = data_loader.dataset.label_prompt)
+                    output = model(data, text = all_labels, labels_prompts = level_labels )
+                    output = {k: [y.to(cpu_device) for y in v] for k, v in output.items()}
                 results_dict.update(
-                    {i: (data['study_id'], output['vt_logits_l0'].to(cpu_device), output['vt_logits_l1'].to(cpu_device), data['label'])}
+                    {i: (output, data['label'])}
                 )
             all_predictions = all_gather(results_dict)
             if is_main_process():
-                res = evaluate(all_predictions)
-                print(f'Evaluation on val, AUC={res[0]}')
+                torch.save(all_predictions, 'all_predictions.pkl')
+                res = evaluate(all_predictions, hierarchy = cfg.MODEL.HIERARCHY, use_PNUprompt=cfg.MODEL.USE_PNUPROMPT)
+                print(f'Evaluation on val, AUC={res[0]}, accuracy={res[1]}, f1={res[2]}')
                 torch.save(res, os.path.join(cfg.OUTPUT_DIR,f'predictions_{iteration}.pkl'))
+                eval_result = res[0][1]
             model.train()
 
             if model_ema is not None and cfg.SOLVER.USE_EMA_FOR_MONITOR:
@@ -222,15 +236,16 @@ def do_train(
                 for i, data in enumerate(val_data_loader):
                     with torch.no_grad():
                         data['images'] = data['images'].to(device)
-                        output = model(data, text = data_loader.dataset.label_prompt, label_prompt = data_loader.dataset.label_prompt)
+                        output = model(data, text = all_labels, labels_prompts = level_labels)
                     results_dict.update(
-                        {i: (data['study_id'], output['vt_logits_l0'].to(cpu_device), output['vt_logits_l1'].to(cpu_device), data['label'])}
+                        {i: (output, data['label'])}
                     )
                 all_predictions = all_gather(results_dict)
                 if is_main_process():
                     res = evaluate(all_predictions)
-                    print(f'Evaluation on val, AUC={res[0]}')
+                    print(f'Evaluation on val, AUC={res[0]}, accuracy={res[1]}, f1={res[2]}')
                     torch.save(res, os.path.join(cfg.OUTPUT_DIR,f'predictions_{iteration}.pkl'))
+                eval_result = res[0][1]
             arguments.update(eval_result=eval_result)
 
             if cfg.SOLVER.USE_AUTOSTEP:

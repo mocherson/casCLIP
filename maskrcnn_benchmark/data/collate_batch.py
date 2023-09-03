@@ -99,6 +99,42 @@ class BatchCollator_cxr(object):
     This should be passed to the DataLoader
     """
 
+    def __init__(self, hierarchy=False, use_PNUprompt=False, size_divisible=0):
+        self.hierarchy = hierarchy
+        self.use_PNUprompt = use_PNUprompt
+        self.size_divisible = size_divisible
+
+    def __call__(self, batch):
+        transposed_batch = {key: [d[key] for d in batch] for key in batch[0] }
+
+        transposed_batch['images'] = to_image_list(sum(transposed_batch['images'],[]), self.size_divisible)
+        transposed_batch['label'] = torch.Tensor(np.nan_to_num(np.stack(transposed_batch['label']).astype(float)))
+
+        if self.hierarchy and self.use_PNUprompt:
+            pass
+        elif self.hierarchy and not self.use_PNUprompt:
+            transposed_batch['labels_prompts'] = []
+            transposed_batch['prompt_target'] = []
+            for lp in zip(*transposed_batch['label_prompt']):
+                prompt_df = pd.DataFrame([{s:1 for s in x} for x in lp]).fillna(0)
+                transposed_batch['labels_prompts'].append( prompt_df.columns.tolist() )
+                transposed_batch['prompt_target'].append(torch.Tensor(prompt_df.values) )
+        elif self.use_PNUprompt:
+            pass
+        else:
+            prompt_df = pd.DataFrame([{s:1 for s in x} for x in transposed_batch['label_prompt']]).fillna(0)
+            transposed_batch['labels_prompts'] = [ prompt_df.columns.tolist() ]
+            transposed_batch['prompt_target'] = [ torch.Tensor(prompt_df.values) ]
+
+        return transposed_batch
+
+class BatchCollator_hirachy_cxr(object):
+    """
+    From a list of samples from the dataset,
+    returns the batched images and targets.
+    This should be passed to the DataLoader
+    """
+
     def __init__(self, size_divisible=0):
         self.size_divisible = size_divisible
 
@@ -107,6 +143,10 @@ class BatchCollator_cxr(object):
 
         transposed_batch['images'] = to_image_list(sum(transposed_batch['images'],[]), self.size_divisible)
         transposed_batch['label'] = torch.Tensor(np.nan_to_num(np.stack(transposed_batch['label']).astype(float)))
+        # transposed_batch['label'] = torch.Tensor(np.stack(transposed_batch['label']).astype(float))
+        label1 = transposed_batch['label'][:, [i for i in range(14) if i!=8]] 
+        label2 = transposed_batch['label'][:, [8]] 
+        transposed_batch['level_label'] = [label1, label2]
 
         prompt_df = pd.DataFrame([{s:1 for s in x} for x in transposed_batch['label_prompt']]).fillna(0)
         transposed_batch['label_prompt'] = prompt_df.columns.tolist()
