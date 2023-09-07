@@ -15,12 +15,15 @@ from maskrcnn_benchmark.data.collate_batch import BatchCollator_cxr
 from maskrcnn_benchmark.data.transforms import build_transforms
 
 from transformers import AutoTokenizer
-from maskrcnn_benchmark.data.datasets.cxr import MimicCXR_V2
+from maskrcnn_benchmark.data.datasets.cxr import MimicCXR_V2, MimicCXR_ICD
 
 def build_dataset(cfg, transforms=None):
     for name in cfg.DATASETS.TRAIN:
         if name.lower() =='mimic-cxrv2':
             dataset = MimicCXR_V2(cfg.data_path, hierarchy = cfg.MODEL.HIERARCHY, use_PNUprompt=cfg.MODEL.USE_PNUPROMPT, transforms = transforms)
+            tr_set, val_set, te_set = dataset.split()
+        elif name.lower() =='mimic-cxrv2-icd':
+            dataset = MimicCXR_ICD(cfg.data_path, hierarchy = cfg.MODEL.HIERARCHY, use_PNUprompt=cfg.MODEL.USE_PNUPROMPT, transforms = transforms)
             tr_set, val_set, te_set = dataset.split()
         else:
             pass

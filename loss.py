@@ -151,15 +151,47 @@ class ClipLabelLoss(ClipLoss):
         else:
             return target.to(device)
 
-    def forward(self, image_features, text_features, logit_scale, target, output_dict=False):
+    def forward(self, image_features, text_features, logit_scale, target, output_dict=False, ignore_allzero=False):
         device = image_features.device
         logits_per_image, logits_per_text = self.get_logits(image_features, text_features, logit_scale)
 
         target = self.get_ground_truth(device, logits_per_image.shape[0], target)
 
-        total_loss = F.binary_cross_entropy_with_logits(logits_per_image, target)
+        if ignore_allzero:
+            idx = (target!=0).any(dim=1)
+            target = target[idx]
+            logits_per_image = logits_per_image[idx]
+
+        total_loss = F.binary_cross_entropy_with_logits(logits_per_image, target) if len(target)>0 else 0
 
         return {"label_contrastive_loss": total_loss} if output_dict else total_loss
+
+class MultiPNULoss(nn.Module):
+
+    def __init__(
+            self,
+            num_distinct = 3, label_weights = 1,
+            weight=None, size_average=None, ignore_index=- 100, reduce=None, reduction='mean'
+    ):
+        super().__init__()
+        self.loss = nn.CrossEntropyLoss(weight, size_average, ignore_index, reduce, reduction)
+        self.num_distinct = num_distinct
+        self.label_weights = label_weights
+
+    def forward(self, image_features, text_features, logit_scale, target, output_dict=False):
+        device = image_features.device
+        logits = logit_scale * image_features @ text_features.T
+        logits = logits.split(self.num_distinct,dim=1)
+        if target.dim()==1:
+            target = target.unsqueeze(dim=1)
+        target = target.to(device)
+        label_weights = [self.label_weights] * len(logits) if not isinstance(self.label_weights, (list, tuple)) else self.label_weights
+        assert len(logits) == len(label_weights) and len(logits) == target.shape[1],  f"Length not match. logits: {len(logits)}, label_weights: {len(label_weights)}, target:{target.shape[1]}"
+        total_loss = 0
+        for lg, tg, lw in zip(logits, target.T, label_weights):
+            total_loss += self.loss(lg,tg) * lw
+
+        return {"label_PNU_loss": total_loss} if output_dict else total_loss
 
 
 class CoCaLoss(ClipLoss):
