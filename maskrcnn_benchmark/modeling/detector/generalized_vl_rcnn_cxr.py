@@ -23,7 +23,7 @@ import random
 import timeit
 import pdb
 from copy import deepcopy
-from loss import ClipLoss, ClipLabelLoss
+from loss import ClipLoss, ClipLabelLoss, MultiPNULoss
 
 def random_word(input_ids, mask_token_id, vocabs, padding_token_id, greenlight_map):
     """
@@ -312,8 +312,10 @@ class casCLIP_CXR(nn.Module):
         self.clip_loss = ClipLoss()
         if cfg.SOLVER.LABEL_LOSS=='BCE':
             self.label_loss = ClipLabelLoss()
+        elif cfg.SOLVER.LABEL_LOSS=='Multi-PNU':
+            self.label_loss = MultiPNULoss() 
         else:
-            pass 
+            pass
 
         self.label_level_proj =nn.ModuleList([])
         self.extrac_net = nn.ModuleList([])
@@ -417,7 +419,7 @@ class casCLIP_CXR(nn.Module):
         else:
             visual_features = self.backbone(images.tensors)
 
-        visual_features_agg = torch.cat([torch.nn.MaxPool2d(x.shape[-2:])(x).squeeze() for x in visual_features], dim=1)
+        visual_features_agg = torch.cat([torch.nn.MaxPool2d(x.shape[-2:])(x)[:,:,0,0] for x in visual_features], dim=1)
         visual_features_agg = torch.stack([self.image_agg(x) for x in torch.split(visual_features_agg,n_img)]) 
         visual_emb = F.normalize(self.visual_proj(visual_features_agg), dim=-1)
 
@@ -426,35 +428,38 @@ class casCLIP_CXR(nn.Module):
         visual_info = [visual_emb]
         text_info =[text_emb]
         for i, label_prompt in enumerate(labels_prompts):
-            label_tokenized = self.tokenizer.batch_encode_plus(label_prompt,
-                                                             max_length=self.cfg.MODEL.LANGUAGE_BACKBONE.MAX_QUERY_LEN,
-                                                             padding="longest",
-                                                             return_special_tokens_mask=True,
-                                                             return_tensors='pt',
-                                                             truncation=True).to(device)            
-                
-            label_tokenizer_input = {"input_ids": label_tokenized.input_ids,
-                               "attention_mask": label_tokenized.attention_mask}
-
-            if self.cfg.MODEL.LANGUAGE_BACKBONE.FREEZE:
-                with torch.no_grad():
-                    label_dict_features = self.language_backbone(label_tokenizer_input)
+            if len(label_prompt) ==0:
+                label_emb.append(None)
             else:
-                label_dict_features = self.language_backbone(label_tokenizer_input)
-        
-            label_emb.append( F.normalize(self.label_level_proj[i](label_dict_features['hidden'][:,0,:]), dim=-1) )
+                label_tokenized = self.tokenizer.batch_encode_plus(label_prompt,
+                                                                 max_length=self.cfg.MODEL.LANGUAGE_BACKBONE.MAX_QUERY_LEN,
+                                                                 padding="longest",
+                                                                 return_special_tokens_mask=True,
+                                                                 return_tensors='pt',
+                                                                 truncation=True).to(device)            
+                    
+                label_tokenizer_input = {"input_ids": label_tokenized.input_ids,
+                                   "attention_mask": label_tokenized.attention_mask}
+
+                if self.cfg.MODEL.LANGUAGE_BACKBONE.FREEZE:
+                    with torch.no_grad():
+                        label_dict_features = self.language_backbone(label_tokenizer_input)
+                else:
+                    label_dict_features = self.language_backbone(label_tokenizer_input)
+            
+                label_emb.append( F.normalize(self.label_level_proj[i](label_dict_features['hidden'][:,0,:]), dim=-1) )
 
             visual_info.append(F.normalize(self.extrac_net[i](visual_info[i]),dim=-1))
             text_info.append(F.normalize(self.extrac_net[i](text_info[i]),dim=-1))
 
-
         if self.training:
             cliploss = self.clip_loss(visual_emb, text_emb, self.logit_scale[0].exp(), output_dict=False) * self.cfg.SOLVER.LOSS_WEIGHT.CLIPLOSS
-            cliploss_visual_label = 0
-            cliploss_text_label = 0
+            cliploss_visual_label = torch.tensor(0.0).to(device)
+            cliploss_text_label = torch.tensor(0.0).to(device)
             for i, lb_emb in enumerate(label_emb,1):
-                cliploss_visual_label += self.label_loss(visual_info[i], lb_emb, self.logit_scale[i].exp(), targets[i-1], output_dict=False) * self.cfg.SOLVER.LOSS_WEIGHT.CLIPLOSS_VISUAL_LABEL[i-1] 
-                cliploss_text_label += self.label_loss(text_info[i], lb_emb, self.logit_scale[i].exp(), targets[i-1], output_dict=False) * self.cfg.SOLVER.LOSS_WEIGHT.CLIPLOSS_TEXT_LABEL[i-1]
+                if lb_emb is not None:
+                    cliploss_visual_label += self.label_loss(visual_info[i], lb_emb, self.logit_scale[i].exp(), targets[i-1], output_dict=False) * self.cfg.SOLVER.LOSS_WEIGHT.CLIPLOSS_VISUAL_LABEL[i-1] 
+                    cliploss_text_label += self.label_loss(text_info[i], lb_emb, self.logit_scale[i].exp(), targets[i-1], output_dict=False) * self.cfg.SOLVER.LOSS_WEIGHT.CLIPLOSS_TEXT_LABEL[i-1]
             losses = {"cliploss": cliploss, 
                       'cliploss_visual_label':cliploss_visual_label , 
                       'cliploss_text_label':cliploss_text_label }

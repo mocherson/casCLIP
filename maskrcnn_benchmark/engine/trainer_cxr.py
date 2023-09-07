@@ -42,7 +42,7 @@ def reduce_loss_dict(loss_dict):
         reduced_losses = {k: v for k, v in zip(loss_names, all_losses)}
     return reduced_losses
 
-def evaluate(all_predictions, hierarchy = False, use_PNUprompt=False, ):
+def evaluate(all_predictions, hierarchy = False, use_PNUprompt=False, icd=False):
     logits, labels = [], []
     for p in all_predictions:
         for k, v in p.items():
@@ -51,9 +51,7 @@ def evaluate(all_predictions, hierarchy = False, use_PNUprompt=False, ):
     lg = [torch.cat(x) for x in zip(*logits)]
     labels = torch.cat(labels)
     lb = [labels] * len(lg)
-    if not hierarchy and not use_PNUprompt:
-        pass
-    elif hierarchy and not use_PNUprompt:
+    if hierarchy and not icd:
         lg[1] = lg[1][:,:-2]
         lg[2] = lg[2][:,-2:]
         lb[1] = lb[1][:,:-1]
@@ -222,8 +220,8 @@ def do_train(
                 )
             all_predictions = all_gather(results_dict)
             if is_main_process():
-                torch.save(all_predictions, 'all_predictions.pkl')
-                res = evaluate(all_predictions, hierarchy = cfg.MODEL.HIERARCHY, use_PNUprompt=cfg.MODEL.USE_PNUPROMPT)
+                icd = True if "mimic-cxrv2-icd" in cfg.DATASETS.TRAIN else False
+                res = evaluate(all_predictions, hierarchy = cfg.MODEL.HIERARCHY, use_PNUprompt=cfg.MODEL.USE_PNUPROMPT, icd=icd)
                 print(f'Evaluation on val, AUC={res[0]}, accuracy={res[1]}, f1={res[2]}')
                 torch.save(res, os.path.join(cfg.OUTPUT_DIR,f'predictions_{iteration}.pkl'))
                 eval_result = res[0][1]
@@ -242,7 +240,8 @@ def do_train(
                     )
                 all_predictions = all_gather(results_dict)
                 if is_main_process():
-                    res = evaluate(all_predictions)
+                    icd = True if "mimic-cxrv2-icd" in cfg.DATASETS.TRAIN else False
+                    res = evaluate(all_predictions, all_predictions, hierarchy = cfg.MODEL.HIERARCHY, use_PNUprompt=cfg.MODEL.USE_PNUPROMPT, icd=icd)
                     print(f'Evaluation on val, AUC={res[0]}, accuracy={res[1]}, f1={res[2]}')
                     torch.save(res, os.path.join(cfg.OUTPUT_DIR,f'predictions_{iteration}.pkl'))
                 eval_result = res[0][1]
