@@ -16,9 +16,9 @@ from .caption import CaptionTSV
 from .lvis import LvisDetection
 from .pseudo_data import PseudoData
 from .phrasecut import PhrasecutDetection
-from .cxr import MimicCXR_V2
+from .cxr import MimicCXR_V2, MimicCXR_ICD
 
 __all__ = ["COCODataset", "TSVDataset", "ODTSVDataset", "ConcatDataset", "PascalVOCDataset", "Background",
            "ModulatedDataset", "MixedDataset", "CocoDetection", "FlickrDataset", "RefExpDataset", "GQADataset",
-           "CocoDetectionTSV", "CocoGrounding", "CaptionTSV", "LvisDetection", "PseudoData", "PhrasecutDetection", "MimicCXR_V2"
+           "CocoDetectionTSV", "CocoGrounding", "CaptionTSV", "LvisDetection", "PseudoData", "PhrasecutDetection", "MimicCXR_V2", "MimicCXR_ICD"
            ]

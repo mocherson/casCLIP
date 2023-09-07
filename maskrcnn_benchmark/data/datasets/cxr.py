@@ -80,8 +80,6 @@ class MimicCXR_V2(VisionDataset):
         Args:
             index (int): Index
 
-        Returns:
-            tuple: Tuple (images, target, index). images is a list of images. target includes caption
         """
         data = self.meta_data.iloc[index]
         subject_id = data['subject_id']
@@ -109,16 +107,13 @@ class MimicCXR_V2(VisionDataset):
                         continue
 
                 if len(label_prompt)==0:
-                    label_prompt = ['Chest Disease is not found.']
+                    label_prompt = ['Not sure if Chest Disease is found.']
             else:
-                for x, v in label.items():
-                    prompt_target = label.drpna()
-                    if not pd.isna(v):
-                        label_prompt.append(self.label_prompt.loc[x])
+                prompt_target = label.dropna()
+                label_prompt = self.label_prompt
 
-                if len(label_prompt)==0:
-                    label_prompt = [self.label_prompt.loc['No Finding']]
-                    prompt_target = pd.Series({'No Finding':1.0})
+                if len(prompt_target)==0: 
+                    prompt_target = pd.Series({'No Finding':2.0})
         else:
             label_prompt = [[], []]  
             prompt_target = [[], []]
@@ -144,7 +139,7 @@ class MimicCXR_V2(VisionDataset):
             else:
                 label_prompt[0] = self.label_prompt.iloc[:-1]
                 label_prompt[1] = self.label_prompt.iloc[-1]
-                prompt_target[0] = label.drop('No Finding').fillna(0)
+                prompt_target[0] = label.drop('No Finding').fillna(0).values
                 prompt_target[1] = label['No Finding'] 
 
         n_prompt = len(label_prompt) 
@@ -172,5 +167,96 @@ class MimicCXR_V2(VisionDataset):
         return tr_set, val_set, te_set
 
 
+class MimicCXR_ICD(MimicCXR_V2):
+    """MimicCXR_V2 dataset imported from TorchVision.
+        It is modified to handle several image sources
+
+    Args:
+        root (string): Path to the dataset
+        metafile (string): Path to meta data.
+        transform (callable, optional): A function/transform that  takes in an PIL image
+            and returns a transformed version. E.g, ``transforms.ToTensor``
+        target_transform (callable, optional): A function/transform that takes in the
+            target and transforms it.
+        transforms (callable, optional): A function/transform that takes input sample and its target as entry
+            and returns a transformed version.
+    """
+
+    def __init__(
+            self,
+            root: str,
+            metafile: str = 'cxr-study-list-icd.csv',
+            labelfile: str = 'mimic-cxr-2.0.0-chexpert_fill.csv',
+            splitfile: str = 'mimic-cxr-2.0.0-split.csv',
+            icd_mapping: str = 'icd_mapping.csv',
+            hierarchy: bool = False,
+            use_PNUprompt: bool =False,
+            transform: Optional[Callable] = None,
+            target_transform: Optional[Callable] = None,
+            transforms: Optional[Callable] = None,
+    ) -> None:
+        super(MimicCXR_ICD, self).__init__(root, metafile, labelfile, splitfile,hierarchy,use_PNUprompt, transform, target_transform, transforms)
+
+        self.icd_map = pd.read_csv(os.path.join(root, icd_mapping), index_col=['icd_code', 'icd_version'])
 
 
+
+    def __len__(self):
+        return len(self.meta_data)  
+
+    def __getitem__(self, index):
+        """
+        Args:
+            index (int): Index
+
+        """
+        data = self.meta_data.iloc[index]
+        subject_id = data['subject_id']
+        study_id = data['study_id']
+        text = data['text']
+        image_folder = data['path'][:-4]
+        image_files = glob.glob(os.path.join(self.root, image_folder)+'/*.jpg')
+        label = data.loc[self.label_prompt.index]
+        if pd.isna(data['icd_code']):
+            icd_code = []
+            icd_version = []
+            label_prompt = [[], [], []]
+        else:
+            icd_code = eval(data['icd_code'])
+            icd_version = eval(data['icd_version'])
+            diag = pd.concat([self.icd_map.loc[x] for x in zip(icd_code,icd_version)], axis=1)
+            label_prompt = diag.loc[['long_title','category_title','chapter_title']].values.tolist() 
+
+        images = [Image.open(fn).convert("RGB") for fn in image_files]
+        if self.transforms is not None:
+            images = [self.transforms(img) for img in images]
+        n_img = len(images)
+
+        # present = label[label==1].index
+        # absent = label[label==0].index
+        # uncertain = label[label==2].index
+        # unmentioned = label[label.isna()].index
+        
+        if not self.hierarchy:
+            label_prompt = [sum(label_prompt,[]) ]  
+            
+        n_prompt = len(label_prompt) 
+
+        
+
+        return {'images': images, 'text': text, 'label': label.values, 'label_prompt': label_prompt, 
+                'n_img': n_img, 'n_prompt': n_prompt, 'index':index, 'study_id': study_id}
+
+    def split(self):
+        study_id_train = self.split_data.query('split=="train"')['study_id'].unique()
+        study_id_val = self.split_data.query('split=="validate"')['study_id'].unique()
+        study_id_test = self.split_data.query('split=="test"')['study_id'].unique()
+
+        tr_df = self.all_meta_data.loc[self.all_meta_data['study_id'].isin(study_id_train)]
+        val_df = self.all_meta_data.loc[self.all_meta_data['study_id'].isin(study_id_val)]
+        te_df = self.all_meta_data.loc[self.all_meta_data['study_id'].isin(study_id_test)]
+
+        tr_set, val_set, te_set = copy.copy(self), copy.copy(self), copy.copy(self)
+        tr_set.meta_data, val_set.meta_data, te_set.meta_data  = tr_df, val_df, te_df
+
+        return tr_set, val_set, te_set
