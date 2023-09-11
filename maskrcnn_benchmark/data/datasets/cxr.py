@@ -238,7 +238,7 @@ class MimicCXR_ICD(MimicCXR_V2):
         # unmentioned = label[label.isna()].index
         
         if not self.hierarchy:
-            label_prompt = [sum(label_prompt,[]) ]  
+            label_prompt = sum(label_prompt,[])  
             
         n_prompt = len(label_prompt) 
 

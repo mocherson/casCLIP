@@ -383,7 +383,7 @@ class casCLIP_CXR(nn.Module):
         captions = data['text'] if self.training else kwargs['text'] if 'text' in kwargs else None
         targets = data['prompt_target'] if 'prompt_target' not in kwargs else kwargs['prompt_target'] if 'prompt_target' in kwargs  else None
         labels_prompts = data['labels_prompts'] if 'labels_prompts' not in kwargs else kwargs['labels_prompts'] if 'labels_prompts' in kwargs else None
-        
+
         images = to_image_list(images)
         # batch_size = images.tensors.shape[0]
         device = images.tensors.device
