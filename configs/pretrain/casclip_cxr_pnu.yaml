@@ -58,7 +58,7 @@ MODEL:
 
 TEST:
   DURING_TRAINING: False
-  IMS_PER_BATCH: 64
+  IMS_PER_BATCH: 32
 
 # use for grounding model
 DATASETS:
