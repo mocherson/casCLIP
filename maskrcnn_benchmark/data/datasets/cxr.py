@@ -434,7 +434,10 @@ class Chexpert(VisionDataset):
     ) -> None:
         super(Chexpert, self).__init__(root, transforms, transform, target_transform)
 
-        self.meta_data = pd.read_csv(os.path.join(root, metafile))
+        meta_data = pd.read_csv(os.path.join(root, metafile))
+        if 'Study' not in meta_data.columns:
+            meta_data['Study'] = meta_data['Path'].str.rsplit('/',n=1,expand=True)[0]
+        self.meta_data = meta_data.drop_duplicates(subset=['Study'])
         self.all_meta_data = self.meta_data
         self.label_prompt = pd.DataFrame ([  ['Disease Atelectasis is not found.', 'Disease Atelectasis is found.', 'Not sure if Disease Atelectasis is found.'],
                 ['Disease Cardiomegaly is not found.', 'Disease Cardiomegaly is found.', 'Not sure if Disease Cardiomegaly is found.'], 
@@ -468,7 +471,8 @@ class Chexpert(VisionDataset):
         """
         data = self.meta_data.iloc[index]
 
-        image_files = [ os.path.join(self.root, data['Path']) ]
+        image_folder = data['Study']
+        image_files = glob.glob(os.path.join(self.root, image_folder)+'/*.jpg')
         label = data.loc[self.label_prompt.index]
         # present = label[label==1].index
         # absent = label[label==0].index
@@ -532,7 +536,7 @@ class Chexpert(VisionDataset):
         n_img = len(images)
 
         return {'images': images, 'text': '', 'label': label.values, 'label_prompt': label_prompt, 'prompt_target':prompt_target, 
-                'n_img': n_img, 'n_prompt': n_prompt, 'index':index, 'study_id': data['Path']}
+                'n_img': n_img, 'n_prompt': n_prompt, 'index':index, 'study_id': image_folder}
 
 
 class Chexpert5x200(Chexpert):
