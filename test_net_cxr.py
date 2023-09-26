@@ -26,7 +26,7 @@ import copy
 from sklearn.metrics import roc_auc_score, accuracy_score, f1_score, precision_recall_curve
 
 def evaluate(logit, labels, hierarchy = False,  softmax=False, merge_level=False,
-            per_label = False, ppl =3, use_thr=False, multi_class=False, average=True):
+            per_label = False, ppl =3, pos_pos = 1, use_thr=False, multi_class=False, average=True):
     lg = copy.deepcopy(logit)
     if softmax:
         lg = [x.reshape((-1,ppl)).softmax(dim=1).reshape(x.shape) for x in lg]
@@ -54,7 +54,7 @@ def evaluate(logit, labels, hierarchy = False,  softmax=False, merge_level=False
 
     if not use_thr:
         if not per_label:
-            auc = [roc_auc_score(l[l!=2],x[:,1::ppl][l!=2]) for x, l in zip(lg, lb)]
+            auc = [roc_auc_score(l[l!=2],x[:,pos_pos::ppl][l!=2]) for x, l in zip(lg, lb)]
             pred = [torch.stack([x.argmax(dim=1) for x in x.split(ppl,dim=1)], dim=1 ) for x in lg]
             for x in pred:
                 x[x==2]=0
@@ -65,16 +65,16 @@ def evaluate(logit, labels, hierarchy = False,  softmax=False, merge_level=False
             for x in pred:
                 x[x==2]=0
             if average:
-                auc = [np.mean([roc_auc_score(l[l!=2],x[l!=2]) for x,l in zip(xx[:,1::ppl].T, ll.T) if len(l.unique())>1 ]) for xx, ll in zip(lg, lb)]
+                auc = [np.mean([roc_auc_score(l[l!=2],x[l!=2]) for x,l in zip(xx[:,pos_pos::ppl].T, ll.T) if len(l.unique())>1 ]) for xx, ll in zip(lg, lb)]
                 acc = [np.mean([accuracy_score(l[l!=2],x[l!=2]) for x,l in zip(xx.T,ll.T) if len(l.unique())>1  ]) for xx, ll in zip(pred, lb)]
                 f1 = [np.mean([f1_score(l[l!=2],x[l!=2]) for x,l in zip(xx.T,ll.T) if len(l.unique())>1  ]) for xx,ll  in zip(pred, lb)]
             else:
-                auc = [[roc_auc_score(l[l!=2],x[l!=2]) if len(l.unique())>1 else -1 for x,l in zip(xx[:,1::ppl].T, ll.T)  ] for xx, ll in zip(lg, lb)]
+                auc = [[roc_auc_score(l[l!=2],x[l!=2]) if len(l.unique())>1 else -1 for x,l in zip(xx[:,pos_pos::ppl].T, ll.T)  ] for xx, ll in zip(lg, lb)]
                 acc = [[accuracy_score(l[l!=2],x[l!=2])  if len(l.unique())>1 else -1 for x,l in zip(xx.T,ll.T) ] for xx, ll in zip(pred, lb)]
                 f1 = [[f1_score(l[l!=2],x[l!=2]) if len(l.unique())>1 else -1 for x,l in zip(xx.T,ll.T) ] for xx,ll  in zip(pred, lb)]
         return auc, acc, f1 
     else:
-        lg = [x[:,1::ppl] for x in lg]
+        lg = [x[:,pos_pos::ppl] for x in lg]
         if not per_label:
             auc = [roc_auc_score(l[l!=2],x[l!=2]) for x, l in zip(lg, lb)]
             prt = [precision_recall_curve(l[l!=2],x[l!=2]) for x, l in zip(lg, lb)]
