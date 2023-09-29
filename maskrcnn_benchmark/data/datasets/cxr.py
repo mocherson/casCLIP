@@ -49,7 +49,7 @@ class MimicCXR_V2(VisionDataset):
         meta_data = pd.read_csv(os.path.join(root, metafile))
         label_data = pd.read_csv(os.path.join(root, labelfile))
         self.split_data = pd.read_csv(os.path.join(root, splitfile))
-        self.meta_data = meta_data.merge(label_data,on=['subject_id','study_id'])
+        self.meta_data = meta_data.merge(label_data,on=['subject_id','study_id'], how='left')
         self.all_meta_data = self.meta_data
         self.label_prompt = pd.DataFrame ([  ['Disease Atelectasis is not found.', 'Disease Atelectasis is found.', 'Not sure if Disease Atelectasis is found.'],
                 ['Disease Cardiomegaly is not found.', 'Disease Cardiomegaly is found.', 'Not sure if Disease Cardiomegaly is found.'], 
@@ -140,7 +140,7 @@ class MimicCXR_V2(VisionDataset):
                 label_prompt[0] = self.label_prompt.iloc[:-1]
                 label_prompt[1] = self.label_prompt.iloc[-1]
                 prompt_target[0] = label.drop('No Finding').fillna(0).values
-                prompt_target[1] = label['No Finding'] 
+                prompt_target[1] = label['No Finding'].fillna(0)
 
         n_prompt = len(label_prompt) 
 
