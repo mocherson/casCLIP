@@ -140,7 +140,7 @@ class MimicCXR_V2(VisionDataset):
                 label_prompt[0] = self.label_prompt.iloc[:-1]
                 label_prompt[1] = self.label_prompt.iloc[-1]
                 prompt_target[0] = label.drop('No Finding').fillna(0).values
-                prompt_target[1] = label['No Finding'].fillna(0)
+                prompt_target[1] = 0 if pd.isna(label['No Finding']) else label['No Finding']
 
         n_prompt = len(label_prompt) 
 
