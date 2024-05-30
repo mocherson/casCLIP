@@ -15,7 +15,7 @@ from maskrcnn_benchmark.data.collate_batch import BatchCollator_cxr
 from maskrcnn_benchmark.data.transforms import build_transforms
 
 from transformers import AutoTokenizer
-from maskrcnn_benchmark.data.datasets.cxr import MimicCXR_V2, MimicCXR_ICD
+from maskrcnn_benchmark.data.datasets.cxr import *
 
 def build_dataset(cfg, transforms=None):
     for name in cfg.DATASETS.TRAIN:
@@ -24,6 +24,24 @@ def build_dataset(cfg, transforms=None):
             tr_set, val_set, te_set = dataset.split()
         elif name.lower() =='mimic-cxrv2-icd':
             dataset = MimicCXR_ICD(cfg.data_path, hierarchy = cfg.MODEL.HIERARCHY, use_PNUprompt=cfg.MODEL.USE_PNUPROMPT, transforms = transforms)
+            tr_set, val_set, te_set = dataset.split()
+        elif name.lower() =='chestxray14':
+            dataset = ChestXray14(cfg.data_path, hierarchy = cfg.MODEL.HIERARCHY, use_PNUprompt=cfg.MODEL.USE_PNUPROMPT, transforms = transforms)
+            tr_set, val_set, te_set = dataset.split()
+        elif name.lower() =='chexpert':
+            dataset = Chexpert(cfg.data_path, hierarchy = cfg.MODEL.HIERARCHY, use_PNUprompt=cfg.MODEL.USE_PNUPROMPT, transforms = transforms)
+            tr_set, val_set, te_set = None, None, dataset
+        elif name.lower() =='chexpert5x200':
+            dataset = Chexpert5x200(cfg.data_path, metafile = 'candidate.csv', hierarchy = cfg.MODEL.HIERARCHY, use_PNUprompt=cfg.MODEL.USE_PNUPROMPT, transforms = transforms)
+            tr_set, val_set, te_set = None, None, dataset
+        elif name.lower() =='chexpert500':
+            dataset = Chexpert500(cfg.data_path, hierarchy = cfg.MODEL.HIERARCHY, use_PNUprompt=cfg.MODEL.USE_PNUPROMPT, transforms = transforms)
+            tr_set, val_set, te_set = None, None, dataset
+        elif name.lower() =='rsna':
+            dataset = RSNA(cfg.data_path, hierarchy = cfg.MODEL.HIERARCHY, use_PNUprompt=cfg.MODEL.USE_PNUPROMPT, transforms = transforms)
+            tr_set, val_set, te_set = dataset.split()
+        elif name.lower() =='mimic-cxr-im':
+            dataset = MimicCXR_im(cfg.data_path, hierarchy = cfg.MODEL.HIERARCHY, use_PNUprompt=cfg.MODEL.USE_PNUPROMPT, transforms = transforms)
             tr_set, val_set, te_set = dataset.split()
         else:
             pass
@@ -98,6 +116,9 @@ def make_data_loader(cfg,  is_distributed=False, num_replicas=None, rank=None, s
     data_loaders = []
     for di, dataset in enumerate(datasets):
         is_train = di==0
+        if dataset is None:
+            data_loaders.append(None)
+            continue
 
         if is_train:
             images_per_batch = cfg.SOLVER.IMS_PER_BATCH
@@ -134,7 +155,7 @@ def make_data_loader(cfg,  is_distributed=False, num_replicas=None, rank=None, s
 
         if is_train and cfg.SOLVER.MAX_EPOCH > 0:
             num_iters = cfg.SOLVER.MAX_EPOCH * len(dataset) // cfg.SOLVER.IMS_PER_BATCH
-            print("Number of iterations are {}".format(num_iters))
+            print("Number of training iterations are {}".format(num_iters))
             cfg.defrost()
             cfg.SOLVER.MAX_ITER = num_iters
             cfg.SOLVER.DATASET_LENGTH = len(dataset)

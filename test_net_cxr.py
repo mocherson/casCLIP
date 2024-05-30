@@ -41,7 +41,7 @@ def evaluate(logit, labels, hierarchy = False,  softmax=False, merge_level=False
         lg.append(lg[1])
         lb.append(lb[1])
 
-    assert len(lg)==3 and len(lb)==3
+    # assert len(lg)==3 and len(lb)==3
     if not merge_level:
         lg[1] = lg[1][:,:-ppl]
         lg[2] = lg[2][:,-ppl:]
@@ -221,7 +221,7 @@ def main():
     cfg.merge_from_list(args.opts)
     cfg.data_path = args.data_path
     cfg.TEST.IMS_PER_BATCH = 16
-    cfg.MODEL.DEVICE = 'cuda:9'
+    cfg.MODEL.DEVICE = 'cuda:0'
     cfg.DATASETS.TRAIN = (args.dataset,)
     cfg.freeze() 
 

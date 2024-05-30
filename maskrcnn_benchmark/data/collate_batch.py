@@ -107,7 +107,7 @@ class BatchCollator_cxr(object):
     def __call__(self, batch):
         transposed_batch = {key: [d[key] for d in batch] for key in batch[0] }
 
-        transposed_batch['images'] = to_image_list(sum(transposed_batch['images'],[]), self.size_divisible)
+        transposed_batch['images'] = to_image_list(sum(transposed_batch['images'],[]), self.size_divisible) 
         transposed_batch['label'] = torch.Tensor(np.nan_to_num(np.stack(transposed_batch['label']).astype(float)))
 
         if self.hierarchy and self.use_PNUprompt:

@@ -208,7 +208,7 @@ def main():
     if args.override_output_dir:
         cfg.OUTPUT_DIR = args.override_output_dir
 
-    cfg.AUGMENT.FLIP_PROB_TRAIN = 0
+    cfg.AUGMENT.FLIP_PROB_TRAIN = 0.0
     cfg.freeze()
 
     seed = cfg.SOLVER.SEED + args.local_rank

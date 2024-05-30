@@ -162,7 +162,9 @@ class ClipLabelLoss(ClipLoss):
             target = target[idx]
             logits_per_image = logits_per_image[idx]
 
-        total_loss = F.binary_cross_entropy_with_logits(logits_per_image, target) if len(target)>0 else 0
+        pos_weight = (target==0).sum()/(target==1).sum()
+
+        total_loss = F.binary_cross_entropy_with_logits(logits_per_image, target, pos_weight=pos_weight) if len(target)>0 else 0
 
         return {"label_contrastive_loss": total_loss} if output_dict else total_loss
 
